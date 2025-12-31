@@ -28,6 +28,10 @@
 #define ESP_STA_WIFI_PASS      "rwYwsWh1P3"
 #define ESP_STA_MAXIMUM_RETRY  5
 
+// NVS
+#define NVS_NAMESPACE          "storage"
+#define NVS_RST_CNT_KEY        "rst_cnt"
+
 static const char *TAG = "main.c";
 
 /* FreeRTOS event group to signal when we are connected & ready to make a request */
@@ -89,7 +93,8 @@ static int check_wifi_sta_or_ap(void)
     ESP_LOGI(TAG, "STA SSID:%s", wifi_config.sta.ssid);
     ESP_LOGI(TAG, "STA PASSWORD:%s", wifi_config.sta.password);
 
-    if (strlen(wifi_config.sta.ssid) > 0) {
+    // if (strlen(wifi_config.sta.ssid) > 0) {
+    if (strlen((char*)wifi_config.sta.ssid) > 0) {
         ret = 0;
     } else {
         ret = 1;
@@ -197,8 +202,9 @@ static void initialise_wifi(void)
     }
 }
 
-void app_main(void)
+static int user_nvs_init(void)
 {
+    uint8_t system_reset_counter = 0;
     //Initialize NVS
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -206,6 +212,55 @@ void app_main(void)
       ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
+
+    do {
+        // Open NVS handle
+        nvs_handle_t my_handle;
+        ret = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &my_handle);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Error (%s) opening NVS handle!", esp_err_to_name(ret));
+            ret = -1;
+            break;
+        }
+
+        // Read back the value
+        ret = nvs_get_u8(my_handle, NVS_RST_CNT_KEY, &system_reset_counter);
+        switch (ret) {
+            case ESP_OK:
+                ESP_LOGI(TAG, "Read sys reset counter = %d", system_reset_counter);
+                break;
+            case ESP_ERR_NVS_NOT_FOUND:
+                ESP_LOGW(TAG, "The value is not initialized yet!");
+                break;
+            default:
+                ESP_LOGE(TAG, "Error (%s) reading!", esp_err_to_name(ret));
+        }
+
+        system_reset_counter++;
+        ESP_LOGI(TAG, "Write sys reset counter = %d", system_reset_counter);
+        ret = nvs_set_u8(my_handle, NVS_RST_CNT_KEY, system_reset_counter);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to write counter!");
+        }
+
+        ESP_LOGI(TAG, "Committing updates in NVS...");
+        ret = nvs_commit(my_handle);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to commit NVS changes!");
+        }
+
+        // Close
+        nvs_close(my_handle);
+        ESP_LOGI(TAG, "NVS handle closed.");
+
+    } while (0);
+
+    return ret;
+}
+
+void app_main(void)
+{
+    user_nvs_init();
 
     initialise_wifi();
 }
