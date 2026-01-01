@@ -15,6 +15,7 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "mdns.h"
 
 static const char *TAG = "main.c";
 
@@ -299,7 +300,7 @@ static int check_wifi_sta_or_ap(void)
         .sta.password = ESP_STA_WIFI_PASS,
     };
 
-    ESP_LOGW(TAG, "wriet wifi ssid:%s pass:%s", wifi_sta_config.sta.ssid, wifi_sta_config.sta.password);
+    ESP_LOGW(TAG, "Pre Write wifi ssid:%s pass:%s", wifi_sta_config.sta.ssid, wifi_sta_config.sta.password);
     ESP_ERROR_CHECK( esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_sta_config) );
 
@@ -346,8 +347,8 @@ static void initialise_wifi(void)
     ret = check_wifi_sta_or_ap();
     if (ret == 1) {
         ESP_LOGI(TAG, "==========>>> ESP_WIFI_MODE_AP");
-        esp_netif_t *sta_netif = esp_netif_create_default_wifi_ap();
-        assert(sta_netif);
+        esp_netif_t *esp_netif_handle = esp_netif_create_default_wifi_ap();
+        assert(esp_netif_handle);
 
         wifi_config_t wifi_config = {
             .ap = {
@@ -392,8 +393,8 @@ static void initialise_wifi(void)
                 ESP_AP_WIFI_SSID, ESP_AP_WIFI_PASS, ESP_AP_WIFI_CHANNEL);
     } else {
         ESP_LOGI(TAG, "==========>>> ESP_WIFI_MODE_STA");
-        esp_netif_t *sta_netif = esp_netif_create_default_wifi_sta();
-        assert(sta_netif);
+        esp_netif_t *esp_netif_handle = esp_netif_create_default_wifi_sta();
+        assert(esp_netif_handle);
 
         ESP_ERROR_CHECK( esp_wifi_set_mode(WIFI_MODE_STA));
         ESP_ERROR_CHECK( esp_wifi_start() );
@@ -445,6 +446,38 @@ static int user_timer_init(void)
     return 0;
 }
 
+static int user_mdns_init(void)
+{
+    mdns_free();
+
+    ESP_LOGI(TAG, "Initializing mDNS, hostname:%s", CONFIG_LWIP_LOCAL_HOSTNAME);
+    // 初始化 mDNS 服务
+    esp_err_t err = mdns_init();
+    if (err) {
+        ESP_LOGE(TAG, "MDNS Init failed: %d", err);
+        return -1;
+    }
+
+    // 设置 hostname
+    mdns_hostname_set(CONFIG_LWIP_LOCAL_HOSTNAME);
+    // 设置默认实例
+    mdns_instance_name_set(CONFIG_LWIP_LOCAL_HOSTNAME);
+    mdns_txt_item_t serviceTxtData[2] = {
+        {"board","esp32"},
+    };
+
+    uint8_t mac_addr_byte[6];
+    esp_read_mac(mac_addr_byte, ESP_MAC_WIFI_STA);
+    char mac_addr[24];
+    snprintf(mac_addr, sizeof(mac_addr), MACSTR, MAC2STR(mac_addr_byte));
+
+    serviceTxtData[1].key = "mac";
+    serviceTxtData[1].value = (const char *)mac_addr;
+    mdns_service_add(NULL, "_http", "_tcp", 80, serviceTxtData, 2);
+
+    return 0;
+}
+
 void app_main(void)
 {
     print_system_info();
@@ -455,7 +488,6 @@ void app_main(void)
     user_timer_init();
 
     initialise_wifi();
-
     while (1)
     {
         EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
@@ -468,6 +500,8 @@ void app_main(void)
         if (bits & WIFI_CONNECTED_BIT) {
             ESP_LOGI(TAG, "connected to ap SSID:%s password:%s",
                     g_wifi_sta_config.sta.ssid, g_wifi_sta_config.sta.password);
+
+            user_mdns_init();
         } else if (bits & WIFI_FAIL_BIT) {
             ESP_LOGI(TAG, "Failed to connect to SSID:%s, password:%s",
                     g_wifi_sta_config.sta.ssid, g_wifi_sta_config.sta.password);
