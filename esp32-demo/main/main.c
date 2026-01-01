@@ -16,6 +16,14 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 
+static const char *TAG = "main.c";
+
+#define ENABLE_SMARTCONFIG 1
+#if ENABLE_SMARTCONFIG
+#include "esp_smartconfig.h"
+int g_smartconfig_enable = 0;
+#endif // ENABLE_SMARTCONFIG
+
 // AP
 #define ESP_AP_WIFI_SSID      "esp32-ap"
 #define ESP_AP_WIFI_PASS      "00000000"
@@ -29,7 +37,7 @@
 #endif
 
 // STA
-#define ESP_PREWRITE_WIFI      1
+#define ESP_PREWRITE_WIFI      0
 #if ESP_PREWRITE_WIFI
 #define ESP_STA_WIFI_SSID      "ZTE-xNH5kA"
 #define ESP_STA_WIFI_PASS      "rwYwsWh1P3"
@@ -40,22 +48,21 @@
 #define NVS_NAMESPACE          "storage"
 #define NVS_RST_CNT_KEY        "rst_cnt"
 
-static const char *TAG = "main.c";
-
 /* FreeRTOS event group to signal when we are connected & ready to make a request */
 static EventGroupHandle_t s_wifi_event_group;
 
 #define WIFI_CONNECTED_BIT           BIT0
 #define WIFI_FAIL_BIT                BIT1
-#define SYS_RESTORE_TIMEOUT_BIT      BIT2
+#define WIFI_SMARTCONFIG_DONE_BIT    BIT2
+#define SYS_RESTORE_TIMEOUT_BIT      BIT3
 
 static int s_retry_num = 0;
-
 static int g_clean_wifi_info_flag = 0;
-
-wifi_config_t g_wifi_sta_config;
+static wifi_config_t g_wifi_sta_config;
 
 static esp_timer_handle_t system_restore_time_handle;
+
+static void smartconfig_task(void * parm);
 
 static int print_system_info(void)
 {
@@ -124,7 +131,16 @@ static void event_handler(void* arg, esp_event_base_t event_base,
                  MAC2STR(event->mac), event->aid, event->reason);
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         ESP_LOGI(TAG, "STA Start");
+#if ENABLE_SMARTCONFIG
+        if (g_smartconfig_enable) {
+            ESP_LOGI(TAG, "SmartConfig start");
+            xTaskCreate(smartconfig_task, "smartconfig_task", 4096, NULL, 3, NULL);
+        } else {
+            esp_wifi_connect();
+        }
+#else
         esp_wifi_connect();
+#endif // ENABLE_SMARTCONFIG
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_STOP) {
         ESP_LOGI(TAG, "STA Stop");
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
@@ -141,6 +157,37 @@ static void event_handler(void* arg, esp_event_base_t event_base,
         ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
         s_retry_num = 0;
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+    } else if (event_base == SC_EVENT && event_id == SC_EVENT_SCAN_DONE) {
+        ESP_LOGI(TAG, "Scan done");
+    } else if (event_base == SC_EVENT && event_id == SC_EVENT_FOUND_CHANNEL) {
+        ESP_LOGI(TAG, "Found channel");
+    } else if (event_base == SC_EVENT && event_id == SC_EVENT_GOT_SSID_PSWD) {
+        ESP_LOGI(TAG, "Got SSID and password");
+
+        smartconfig_event_got_ssid_pswd_t *evt = (smartconfig_event_got_ssid_pswd_t *)event_data;
+        uint8_t rvd_data[33] = { 0 };
+
+        memset(&g_wifi_sta_config, 0, sizeof(wifi_config_t));
+        memcpy(g_wifi_sta_config.sta.ssid, evt->ssid, sizeof(g_wifi_sta_config.sta.ssid));
+        memcpy(g_wifi_sta_config.sta.password, evt->password, sizeof(g_wifi_sta_config.sta.password));
+
+        ESP_LOGI(TAG, "SSID:%s", g_wifi_sta_config.sta.ssid);
+        ESP_LOGI(TAG, "PASSWORD:%s", g_wifi_sta_config.sta.password);
+
+        if (evt->type == SC_TYPE_ESPTOUCH_V2) {
+            ESP_ERROR_CHECK( esp_smartconfig_get_rvd_data(rvd_data, sizeof(rvd_data)) );
+            ESP_LOGI(TAG, "RVD_DATA:");
+            for (int i=0; i<33; i++) {
+                printf("%02x ", rvd_data[i]);
+            }
+            printf("\n");
+        }
+
+        ESP_ERROR_CHECK( esp_wifi_disconnect() );
+        ESP_ERROR_CHECK( esp_wifi_set_config(WIFI_IF_STA, &g_wifi_sta_config) );
+        esp_wifi_connect();
+    } else if (event_base == SC_EVENT && event_id == SC_EVENT_SEND_ACK_DONE) {
+        xEventGroupSetBits(s_wifi_event_group, WIFI_SMARTCONFIG_DONE_BIT);
     }
 }
 
@@ -263,6 +310,10 @@ static int check_wifi_sta_or_ap(void)
         ret = 0;
     } else {
         ret = 1;
+#if ENABLE_SMARTCONFIG
+        g_smartconfig_enable = 1;
+        ret = 0;
+#endif // ENABLE_SMARTCONFIG
     }
 
     if (g_clean_wifi_info_flag == 1) {
@@ -287,6 +338,10 @@ static void initialise_wifi(void)
 
     ESP_ERROR_CHECK( esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL) );
     ESP_ERROR_CHECK( esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL) );
+
+#if ENABLE_SMARTCONFIG
+    ESP_ERROR_CHECK( esp_event_handler_register(SC_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL) );
+#endif // ENABLE_SMARTCONFIG
 
     ret = check_wifi_sta_or_ap();
     if (ret == 1) {
@@ -346,6 +401,24 @@ static void initialise_wifi(void)
     }
 }
 
+static void smartconfig_task(void * parm)
+{
+    EventBits_t uxBits;
+    ESP_ERROR_CHECK( esp_smartconfig_set_type(SC_TYPE_ESPTOUCH) );
+    smartconfig_start_config_t cfg = SMARTCONFIG_START_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK( esp_smartconfig_start(&cfg) );
+    while (1) {
+        uxBits = xEventGroupWaitBits(s_wifi_event_group, WIFI_SMARTCONFIG_DONE_BIT, true, false, portMAX_DELAY);
+        if(uxBits & WIFI_SMARTCONFIG_DONE_BIT) {
+            ESP_LOGI(TAG, "smartconfig over");
+            esp_smartconfig_stop();
+            break;
+        }
+    }
+
+    vTaskDelete(NULL);
+}
+
 static void system_restore_timer_callback(void* arg)
 {
     int64_t time_since_boot = esp_timer_get_time();
@@ -390,7 +463,6 @@ void app_main(void)
                 pdTRUE,
                 pdFALSE,
                 portMAX_DELAY);
-
         /* xEventGroupWaitBits() returns the bits before the call returned, hence we can test which event actually
         * happened. */
         if (bits & WIFI_CONNECTED_BIT) {
@@ -404,7 +476,6 @@ void app_main(void)
             esp_timer_stop(system_restore_time_handle);
             ESP_ERROR_CHECK(esp_timer_delete(system_restore_time_handle));
             ESP_LOGI(TAG, "Stopped and deleted system_restore_times");
-
         } else {
             ESP_LOGE(TAG, "UNEXPECTED EVENT");
         }
