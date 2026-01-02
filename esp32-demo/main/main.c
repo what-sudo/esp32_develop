@@ -17,6 +17,13 @@
 #include "esp_timer.h"
 #include "mdns.h"
 
+#include <lwip/netdb.h>
+#include "lwip/err.h"
+#include "lwip/sockets.h"
+#include "lwip/sys.h"
+
+#include "protocol.h"
+
 static const char *TAG = "main.c";
 
 #define ENABLE_SMARTCONFIG 1
@@ -488,6 +495,9 @@ void app_main(void)
     user_timer_init();
 
     initialise_wifi();
+
+    xTaskCreate(udp_server_task, "udp_server", 4096, (void*)AF_INET, 5, NULL);
+
     while (1)
     {
         EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
