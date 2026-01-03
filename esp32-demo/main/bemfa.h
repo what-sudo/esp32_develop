@@ -1,6 +1,9 @@
 #ifndef __BEMFA_H__
 #define __BEMFA_H__
 
+#define BEMFA_SERVER_HOSTNAME       "bemfa.com"
+#define BEMFA_SERVER_PORT           8344
+
 #define BEMFA_DEVICE_ADDTOPIC_API    "http://pro.bemfa.com/vs/web/v1/deviceAddTopic"
 
 void user_bemfa_connect_task(void *pvParameters);
