@@ -24,8 +24,9 @@
 
 #include "main.h"
 #include "protocol.h"
-
 #include "user_nvs_rw.h"
+#include "user_http_client.h"
+#include "bemfa.h"
 
 static const char *TAG = "main.c";
 
@@ -64,34 +65,28 @@ static EventGroupHandle_t s_wifi_event_group;
 #define WIFI_SMARTCONFIG_DONE_BIT    BIT2
 #define SYS_RESTORE_TIMEOUT_BIT      BIT3
 
+static esp_timer_handle_t system_restore_time_handle;
+
 static int s_retry_num = 0;
-int g_clean_wifi_info_flag = 0;
 static wifi_config_t g_wifi_sta_config;
 
-static esp_timer_handle_t system_restore_time_handle;
+int g_clean_wifi_info_flag = 0;
+system_status_t g_system_status;
 
 static int print_system_info(void)
 {
     esp_reset_reason_t reset_reason = esp_reset_reason();
     ESP_LOGI(TAG, "reset reason: %d", reset_reason);
 
-    uint8_t mac_addr_base[6];
-    uint8_t mac_addr_sta[6];
-    uint8_t mac_addr_ap[6];
-    uint8_t mac_addr_ble[6];
-    uint8_t mac_addr_eth[6];
+    esp_read_mac(g_system_status.mac_addr_sta, ESP_MAC_WIFI_STA);
+    esp_read_mac(g_system_status.mac_addr_ap, ESP_MAC_WIFI_SOFTAP);
+    esp_read_mac(g_system_status.mac_addr_ble, ESP_MAC_BT);
+    esp_read_mac(g_system_status.mac_addr_eth, ESP_MAC_ETH);
 
-    esp_read_mac(mac_addr_base, ESP_MAC_BASE);
-    esp_read_mac(mac_addr_sta, ESP_MAC_WIFI_STA);
-    esp_read_mac(mac_addr_ap, ESP_MAC_WIFI_SOFTAP);
-    esp_read_mac(mac_addr_ble, ESP_MAC_BT);
-    esp_read_mac(mac_addr_eth, ESP_MAC_ETH);
-
-    ESP_LOGI(TAG, "mac_addr_base:"MACSTR, MAC2STR(mac_addr_base));
-    ESP_LOGI(TAG, "mac_addr_sta:"MACSTR, MAC2STR(mac_addr_sta));
-    ESP_LOGI(TAG, "mac_addr_ap :"MACSTR, MAC2STR(mac_addr_ap));
-    ESP_LOGI(TAG, "mac_addr_ble:"MACSTR, MAC2STR(mac_addr_ble));
-    ESP_LOGI(TAG, "mac_addr_eth:"MACSTR, MAC2STR(mac_addr_eth));
+    ESP_LOGI(TAG, "mac_addr_sta:"MACSTR, MAC2STR(g_system_status.mac_addr_sta));
+    ESP_LOGI(TAG, "mac_addr_ap :"MACSTR, MAC2STR(g_system_status.mac_addr_ap));
+    ESP_LOGI(TAG, "mac_addr_ble:"MACSTR, MAC2STR(g_system_status.mac_addr_ble));
+    ESP_LOGI(TAG, "mac_addr_eth:"MACSTR, MAC2STR(g_system_status.mac_addr_eth));
 
     esp_chip_info_t chip_info;
     esp_chip_info(&chip_info);
@@ -150,6 +145,8 @@ static void event_handler(void* arg, esp_event_base_t event_base,
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_STOP) {
         ESP_LOGI(TAG, "STA Stop");
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        g_system_status.wifi_connect_status = 0;
+
         if (s_retry_num < ESP_STA_MAXIMUM_RETRY) {
             esp_wifi_connect();
             s_retry_num++;
@@ -430,13 +427,13 @@ void app_main(void)
                 pdTRUE,
                 pdFALSE,
                 portMAX_DELAY);
-        /* xEventGroupWaitBits() returns the bits before the call returned, hence we can test which event actually
-        * happened. */
+
         if (bits & WIFI_CONNECTED_BIT) {
             ESP_LOGI(TAG, "connected to ap SSID:%s password:%s",
                     g_wifi_sta_config.sta.ssid, g_wifi_sta_config.sta.password);
-
+            g_system_status.wifi_connect_status = 1;
             user_mdns_init();
+            xTaskCreate(&user_bemfa_connect_task, "bemfa_connect_task", 8192, NULL, 5, NULL);
         } else if (bits & WIFI_FAIL_BIT) {
             ESP_LOGI(TAG, "Failed to connect to SSID:%s, password:%s",
                     g_wifi_sta_config.sta.ssid, g_wifi_sta_config.sta.password);

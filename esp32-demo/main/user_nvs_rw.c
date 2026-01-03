@@ -179,6 +179,30 @@ int user_nvs_write_string(char *namespace, char *key, char *value)
     return 0;
 }
 
+int user_nvs_read_string(char *namespace, char *key, char *value, size_t size)
+{
+    ESP_LOGW(TAG, "NVS Read namespace:%s key:%s str ", namespace, key);
+
+    // Open NVS handle
+    nvs_handle_t my_handle;
+    esp_err_t ret = nvs_open(namespace, NVS_READONLY, &my_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Error (%s) opening NVS handle!", esp_err_to_name(ret));
+        return -1;
+    }
+
+    ret = nvs_get_str(my_handle, key, value, &size);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to Read namespace:%s key:%s", namespace, key);
+    }
+
+    // Close
+    nvs_close(my_handle);
+    ESP_LOGI(TAG, "NVS handle closed.");
+
+    return 0;
+}
+
 int dump_nvs_key_value(char *namespace)
 {
     ESP_LOGW(TAG, "[%s] NVS dump namespace:%s", __func__, namespace);
