@@ -3,6 +3,7 @@ idf_component_register(SRCS  "main.c"
                         "protocol.c"
                         "bemfa.c"
                         "user_http_client.c"
+                        "user_http_server.c"
                     PRIV_REQUIRES
                         esp_wifi
                         nvs_flash
@@ -10,4 +11,7 @@ idf_component_register(SRCS  "main.c"
                         spi_flash
                         esp-tls
                         esp_http_client
-                    INCLUDE_DIRS ".")
+                        esp_http_server
+                    INCLUDE_DIRS "."
+                    EMBED_FILES "index.html"
+                    )

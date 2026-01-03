@@ -28,6 +28,8 @@
 #include "user_http_client.h"
 #include "bemfa.h"
 
+#include "user_http_server.h"
+
 static const char *TAG = "main.c";
 
 #define ENABLE_SMARTCONFIG 0
@@ -419,7 +421,7 @@ void app_main(void)
     dump_nvs_key_value(NVS_NAMESPACE);
     initialise_wifi();
 
-    xTaskCreate(udp_server_task, "udp_server", 4096, (void*)AF_INET, 5, NULL);
+    // xTaskCreate(udp_server_task, "udp_server", 4096, (void*)AF_INET, 5, NULL);
     while (1)
     {
         EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
@@ -433,7 +435,9 @@ void app_main(void)
                     g_wifi_sta_config.sta.ssid, g_wifi_sta_config.sta.password);
             g_system_status.wifi_connect_status = 1;
             user_mdns_init();
-            xTaskCreate(&user_bemfa_connect_task, "bemfa_connect_task", 8192, NULL, 5, NULL);
+
+            // xTaskCreate(&user_bemfa_connect_task, "bemfa_connect_task", 8192, NULL, 5, NULL);
+            xTaskCreate(&user_http_server_task, "bemfa_connect_task", 8192, NULL, 5, NULL);
         } else if (bits & WIFI_FAIL_BIT) {
             ESP_LOGI(TAG, "Failed to connect to SSID:%s, password:%s",
                     g_wifi_sta_config.sta.ssid, g_wifi_sta_config.sta.password);
