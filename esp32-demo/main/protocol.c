@@ -16,14 +16,16 @@
 #include "lwip/sys.h"
 
 #include "protocol.h"
+#include "bemfa.h"
 
-#define TAG "protocol.c"
+static const char *TAG = "protocol.c";
 
 #define PORT 8266
 
 void udp_server_task(void *pvParameters)
 {
-    char rx_buffer[128];
+    char rx_buffer[256];
+    char tx_buffer[256];
     char addr_str[128];
     int addr_family = (int)pvParameters;
     int ip_protocol = 0;
@@ -115,7 +117,13 @@ void udp_server_task(void *pvParameters)
                 ESP_LOGI(TAG, "Received %d bytes from %s:%d:", len, addr_str, ((struct sockaddr_in *)&source_addr)->sin_port);
                 ESP_LOGI(TAG, "%s", rx_buffer);
 
-                int err = sendto(sock, rx_buffer, len, 0, (struct sockaddr *)&source_addr, sizeof(source_addr));
+                int ret = parse_bemfa_bind_message(rx_buffer, tx_buffer);
+                if (ret < 0) {
+                    ESP_LOGE(TAG, "Failed to parse bind message!");
+                    continue;
+                }
+
+                int err = sendto(sock, tx_buffer, ret, 0, (struct sockaddr *)&source_addr, sizeof(source_addr));
                 if (err < 0) {
                     ESP_LOGE(TAG, "Error occurred during sending: errno %d", errno);
                     break;

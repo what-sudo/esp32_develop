@@ -22,18 +22,22 @@
 #include "lwip/sockets.h"
 #include "lwip/sys.h"
 
+#include "main.h"
 #include "protocol.h"
+
+#include "user_nvs_rw.h"
 
 static const char *TAG = "main.c";
 
-#define ENABLE_SMARTCONFIG 1
+#define ENABLE_SMARTCONFIG 0
 #if ENABLE_SMARTCONFIG
 #include "esp_smartconfig.h"
 int g_smartconfig_enable = 0;
+static void smartconfig_task(void * parm);
 #endif // ENABLE_SMARTCONFIG
 
 // AP
-#define ESP_AP_WIFI_SSID      "esp32-ap"
+#define ESP_AP_WIFI_SSID      "bemfa_esp32"
 #define ESP_AP_WIFI_PASS      "00000000"
 #define ESP_AP_WIFI_CHANNEL   1
 #define MAX_STA_CONN       2
@@ -52,10 +56,6 @@ int g_smartconfig_enable = 0;
 #endif
 #define ESP_STA_MAXIMUM_RETRY  10
 
-// NVS
-#define NVS_NAMESPACE          "storage"
-#define NVS_RST_CNT_KEY        "rst_cnt"
-
 /* FreeRTOS event group to signal when we are connected & ready to make a request */
 static EventGroupHandle_t s_wifi_event_group;
 
@@ -65,12 +65,10 @@ static EventGroupHandle_t s_wifi_event_group;
 #define SYS_RESTORE_TIMEOUT_BIT      BIT3
 
 static int s_retry_num = 0;
-static int g_clean_wifi_info_flag = 0;
+int g_clean_wifi_info_flag = 0;
 static wifi_config_t g_wifi_sta_config;
 
 static esp_timer_handle_t system_restore_time_handle;
-
-static void smartconfig_task(void * parm);
 
 static int print_system_info(void)
 {
@@ -165,7 +163,9 @@ static void event_handler(void* arg, esp_event_base_t event_base,
         ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
         s_retry_num = 0;
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
-    } else if (event_base == SC_EVENT && event_id == SC_EVENT_SCAN_DONE) {
+    }
+#if ENABLE_SMARTCONFIG
+    else if (event_base == SC_EVENT && event_id == SC_EVENT_SCAN_DONE) {
         ESP_LOGI(TAG, "Scan done");
     } else if (event_base == SC_EVENT && event_id == SC_EVENT_FOUND_CHANNEL) {
         ESP_LOGI(TAG, "Found channel");
@@ -197,95 +197,23 @@ static void event_handler(void* arg, esp_event_base_t event_base,
     } else if (event_base == SC_EVENT && event_id == SC_EVENT_SEND_ACK_DONE) {
         xEventGroupSetBits(s_wifi_event_group, WIFI_SMARTCONFIG_DONE_BIT);
     }
+#endif
 }
 
-static int clean_reset_counter(void)
+int write_wifi_info(char *ssid, char *password)
 {
-     // Open NVS handle
-    nvs_handle_t my_handle;
-    esp_err_t ret = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &my_handle);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Error (%s) opening NVS handle!", esp_err_to_name(ret));
-        return -1;
-    }
+    wifi_config_t wifi_sta_config = { 0 };
 
-    ESP_LOGI(TAG, "Write sys reset counter = 0");
-    ret = nvs_set_u8(my_handle, NVS_RST_CNT_KEY, 0);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to write counter!");
-    }
+    ESP_LOGI(TAG, "ssid:%s, password:%s", ssid, password);
 
-    ESP_LOGI(TAG, "Committing updates in NVS...");
-    ret = nvs_commit(my_handle);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to commit NVS changes!");
-    }
+    memccpy(wifi_sta_config.sta.ssid, ssid, 0, strlen(ssid));
+    memccpy(wifi_sta_config.sta.password, password, 0, strlen(password));
 
-    // Close
-    nvs_close(my_handle);
-    ESP_LOGI(TAG, "NVS handle closed.");
+    ESP_ERROR_CHECK(esp_wifi_stop());
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_sta_config) );
 
     return 0;
-}
-
-static int user_nvs_init(void)
-{
-    uint8_t system_reset_counter = 0;
-    //Initialize NVS
-    esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-      ESP_ERROR_CHECK(nvs_flash_erase());
-      ret = nvs_flash_init();
-    }
-    ESP_ERROR_CHECK(ret);
-
-    do {
-        // Open NVS handle
-        nvs_handle_t my_handle;
-        ret = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &my_handle);
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Error (%s) opening NVS handle!", esp_err_to_name(ret));
-            ret = -1;
-            break;
-        }
-
-        // Read back the value
-        ret = nvs_get_u8(my_handle, NVS_RST_CNT_KEY, &system_reset_counter);
-        switch (ret) {
-            case ESP_OK:
-                ESP_LOGI(TAG, "Read sys reset counter = %d", system_reset_counter);
-                break;
-            case ESP_ERR_NVS_NOT_FOUND:
-                ESP_LOGW(TAG, "The value is not initialized yet!");
-                break;
-            default:
-                ESP_LOGE(TAG, "Error (%s) reading!", esp_err_to_name(ret));
-        }
-
-        system_reset_counter++;
-        ESP_LOGI(TAG, "Write sys reset counter = %d", system_reset_counter);
-        ret = nvs_set_u8(my_handle, NVS_RST_CNT_KEY, system_reset_counter);
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to write counter!");
-        }
-
-        ESP_LOGI(TAG, "Committing updates in NVS...");
-        ret = nvs_commit(my_handle);
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to commit NVS changes!");
-        }
-
-        // Close
-        nvs_close(my_handle);
-        ESP_LOGI(TAG, "NVS handle closed.");
-
-        if (system_reset_counter >= 5) {
-            g_clean_wifi_info_flag = 1;
-            clean_reset_counter();
-        }
-    } while (0);
-
-    return ret;
 }
 
 static int check_wifi_sta_or_ap(void)
@@ -301,16 +229,11 @@ static int check_wifi_sta_or_ap(void)
     ESP_LOGI(TAG, "STA SSID:%s", g_wifi_sta_config.sta.ssid);
     ESP_LOGI(TAG, "STA PASSWORD:%s", g_wifi_sta_config.sta.password);
 
+    ESP_ERROR_CHECK(esp_wifi_stop());
+
 #if ESP_PREWRITE_WIFI
-    wifi_config_t wifi_sta_config = {
-        .sta.ssid = ESP_STA_WIFI_SSID,
-        .sta.password = ESP_STA_WIFI_PASS,
-    };
-
     ESP_LOGW(TAG, "Pre Write wifi ssid:%s pass:%s", wifi_sta_config.sta.ssid, wifi_sta_config.sta.password);
-    ESP_ERROR_CHECK( esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_sta_config) );
-
+    write_wifi_info(ESP_STA_WIFI_SSID, ESP_STA_WIFI_PASS);
     ESP_ERROR_CHECK(esp_wifi_get_config(WIFI_IF_STA, &g_wifi_sta_config));
 #endif
 
@@ -409,6 +332,7 @@ static void initialise_wifi(void)
     }
 }
 
+#if ENABLE_SMARTCONFIG
 static void smartconfig_task(void * parm)
 {
     EventBits_t uxBits;
@@ -426,13 +350,14 @@ static void smartconfig_task(void * parm)
 
     vTaskDelete(NULL);
 }
+#endif
 
 static void system_restore_timer_callback(void* arg)
 {
     int64_t time_since_boot = esp_timer_get_time();
-    ESP_LOGI(TAG, "system_restore_timer, time since boot: %lld us", time_since_boot);\
+    ESP_LOGI(TAG, "system_restore_timer, time since boot: %lld us", time_since_boot);
 
-    clean_reset_counter();
+    user_nvs_write_int8(NVS_NAMESPACE, NVS_RST_CNT_KEY, 1);
 
     xEventGroupSetBits(s_wifi_event_group, SYS_RESTORE_TIMEOUT_BIT);
 }
@@ -494,10 +419,10 @@ void app_main(void)
     user_nvs_init();
     user_timer_init();
 
+    dump_nvs_key_value(NVS_NAMESPACE);
     initialise_wifi();
 
     xTaskCreate(udp_server_task, "udp_server", 4096, (void*)AF_INET, 5, NULL);
-
     while (1)
     {
         EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
