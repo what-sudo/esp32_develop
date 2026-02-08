@@ -4,6 +4,7 @@ idf_component_register(SRCS  "main.c"
                         "bemfa.c"
                         "user_http_client.c"
                         "user_http_server.c"
+                        "led.c"
                     PRIV_REQUIRES
                         esp_wifi
                         nvs_flash

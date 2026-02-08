@@ -29,6 +29,7 @@
 #include "bemfa.h"
 
 #include "user_http_server.h"
+#include "led.h"
 
 static const char *TAG = "main.c";
 
@@ -422,6 +423,8 @@ void app_main(void)
     // initialise_wifi();
 
     // xTaskCreate(udp_server_task, "udp_server", 4096, (void*)AF_INET, 5, NULL);
+    xTaskCreate(user_led_blink_task, "user_led_blink", 4096, (void*)AF_INET, 5, NULL);
+
     while (1)
     {
         EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
