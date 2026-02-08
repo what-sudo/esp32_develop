@@ -30,6 +30,8 @@
 
 #include "user_http_server.h"
 #include "led.h"
+#include "pwm.h"
+#include "motor.h"
 
 static const char *TAG = "main.c";
 
@@ -423,7 +425,9 @@ void app_main(void)
     // initialise_wifi();
 
     // xTaskCreate(udp_server_task, "udp_server", 4096, (void*)AF_INET, 5, NULL);
-    xTaskCreate(user_led_blink_task, "user_led_blink", 4096, (void*)AF_INET, 5, NULL);
+    xTaskCreate(user_led_blink_task, "user_led_blink", 4096, NULL, 5, NULL);
+    xTaskCreate(user_pwm_task, "user_pwm", 4096, NULL, 5, NULL);
+    xTaskCreate(user_motor_task, "user_motor", 4096, NULL, 5, NULL);
 
     while (1)
     {

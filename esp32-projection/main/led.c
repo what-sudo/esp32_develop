@@ -18,6 +18,9 @@ static const char *TAG = "led.c";
 
 static uint8_t s_led_state = 0;
 
+uint32_t g_led_clolr = 0;
+float g_led_ligthness = 0.2;
+
 static led_strip_handle_t led_strip;
 
 static void blink_led(void)
@@ -25,7 +28,7 @@ static void blink_led(void)
     /* If the addressable LED is enabled */
     if (s_led_state) {
         /* Set the LED pixel using RGB from 0 (0%) to 255 (100%) for each color */
-        led_strip_set_pixel(led_strip, 0, 152 * 0.2, 245 * 0.2, 255 * 0.2);
+        led_strip_set_pixel(led_strip, 0, (g_led_clolr >> 16 & 0xFF) * g_led_ligthness, (g_led_clolr >> 8 & 0xFF) * g_led_ligthness, (g_led_clolr & 0xFF) * g_led_ligthness);
         /* Refresh the strip to send data */
         led_strip_refresh(led_strip);
     } else {
@@ -64,10 +67,11 @@ static void configure_led(void)
 void user_led_blink_task(void *pvParameters)
 {
 
+    g_led_clolr = 0xFF0000;
     configure_led();
 
     while (1) {
-        ESP_LOGI(TAG, "Turning the LED %s!", s_led_state == true ? "ON" : "OFF");
+        // ESP_LOGI(TAG, "Turning the LED %s!", s_led_state == true ? "ON" : "OFF");
         blink_led();
         /* Toggle the LED state */
         s_led_state = !s_led_state;
