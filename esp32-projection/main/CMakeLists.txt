@@ -6,7 +6,7 @@ idf_component_register(SRCS  "main.c"
                         "user_http_server.c"
                         "led.c"
                         "pwm.c"
-                        "motor.c"
+                        "projection.c"
                     PRIV_REQUIRES
                         esp_wifi
                         nvs_flash

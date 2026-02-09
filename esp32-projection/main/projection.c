@@ -6,17 +6,18 @@
 #include "esp_system.h"
 #include "esp_log.h"
 #include "driver/gpio.h"
+#include "driver/ledc.h"
 
-#include "motor.h"
+#include "projection.h"
 #include "led.h"
 
-static const char *TAG = "motor.c";
+static const char *TAG = "projection.c";
 
-#define MOTOR_OUTPUT_SS       3
+#define MOTOR_OUTPUT_SS       4
 #define MOTOR_OUTPUT_PIN_SEL  ((1ULL << MOTOR_OUTPUT_SS))
 
-#define MOTOR_INPUT_LD        10
-#define MOTOR_INPUT_FG        1
+#define MOTOR_INPUT_LD        5
+#define MOTOR_INPUT_FG        7
 #define MOTOR_INPUT_SWITCH    9
 #define MOTOR_INPUT_PIN_SEL  ((1ULL << MOTOR_INPUT_LD) | (1ULL << MOTOR_INPUT_FG) | (1ULL << MOTOR_INPUT_SWITCH))
 
@@ -41,7 +42,7 @@ static void IRAM_ATTR gpio_isr_handler(void* arg)
     }
 }
 
-static void motor_gpio_interrupt_task(void* arg)
+static void projection_gpio_interrupt_task(void* arg)
 {
     uint32_t io_num;
     int status = 0;
@@ -115,13 +116,56 @@ static int motor_gpio_init(void)
     return 0;
 }
 
-void user_motor_task(void *pvParameters)
+#define LEDC_TIMER              LEDC_TIMER_1
+#define LEDC_MODE               LEDC_LOW_SPEED_MODE
+#define LEDC_OUTPUT_IO          (3) // Define the output GPIO
+#define LEDC_CHANNEL            LEDC_CHANNEL_1
+#define LEDC_DUTY_RES           LEDC_TIMER_12_BIT // Set duty resolution to 13 bits
+#define LEDC_FREQUENCY          (10000) // Frequency in
+
+static void laser_init(void)
+{
+    // Prepare and then apply the LEDC PWM timer configuration
+    ledc_timer_config_t ledc_timer = {
+        .speed_mode       = LEDC_MODE,
+        .timer_num        = LEDC_TIMER,
+        .freq_hz          = LEDC_FREQUENCY,  // Set output frequency at 4 kHz
+        .duty_resolution  = LEDC_DUTY_RES,
+        .clk_cfg          = LEDC_AUTO_CLK
+    };
+    ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
+
+    // Prepare and then apply the LEDC PWM channel configuration
+    ledc_channel_config_t ledc_channel = {
+        .speed_mode     = LEDC_MODE,
+        .timer_sel      = LEDC_TIMER,
+        .channel        = LEDC_CHANNEL,
+        .intr_type      = LEDC_INTR_DISABLE,
+        .gpio_num       = LEDC_OUTPUT_IO,
+        .duty           = 0, // Set duty to 0%
+        .hpoint         = 0
+    };
+    ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
+
+    ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, 0));
+    ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL));
+}
+
+
+void user_projection_task(void *pvParameters)
 {
     g_gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t));
     motor_gpio_init();
-    xTaskCreate(motor_gpio_interrupt_task, "motor_gpio_interrupt_task", 2048, NULL, 10, NULL);
+    laser_init();
+    xTaskCreate(projection_gpio_interrupt_task, "projection_gpio_interrupt_task", 2048, NULL, 10, NULL);
+    uint32_t duty = 2048;
     while (1) {
-        // ESP_LOGI(TAG, "motor task running...");
-        vTaskDelay(2000 / portTICK_PERIOD_MS);
+        ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, duty));
+        ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL));
+        duty += 48;
+        if (duty >= 4096) {
+            duty = 2048;
+        }
+        vTaskDelay(100 / portTICK_PERIOD_MS);
     }
 }

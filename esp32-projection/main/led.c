@@ -19,7 +19,7 @@ static const char *TAG = "led.c";
 static uint8_t s_led_state = 0;
 
 uint32_t g_led_clolr = 0;
-float g_led_ligthness = 0.2;
+float g_led_ligthness = 0.1;
 
 static led_strip_handle_t led_strip;
 
