@@ -33,6 +33,8 @@
 #include "pwm.h"
 #include "projection.h"
 
+#include "my_rmt_transmit.h"
+
 static const char *TAG = "main.c";
 
 #define ENABLE_SMARTCONFIG 0
@@ -428,6 +430,8 @@ void app_main(void)
     xTaskCreate(user_led_blink_task, "user_led_blink", 4096, NULL, 5, NULL);
     xTaskCreate(user_pwm_task, "user_pwm", 4096, NULL, 5, NULL);
     xTaskCreate(user_projection_task, "user_projection", 4096, NULL, 5, NULL);
+
+    rmt_transmit_init();
 
     while (1)
     {

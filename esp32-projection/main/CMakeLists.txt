@@ -7,7 +7,7 @@ idf_component_register(SRCS  "main.c"
                         "led.c"
                         "pwm.c"
                         "projection.c"
-                    PRIV_REQUIRES
+                    REQUIRES
                         esp_wifi
                         nvs_flash
                         esp_timer
@@ -16,6 +16,8 @@ idf_component_register(SRCS  "main.c"
                         esp_http_client
                         esp_http_server
                         esp_driver_ledc
+                        esp_driver_rmt
+                        my_rmt_transmit
                     INCLUDE_DIRS "."
                     EMBED_FILES "index.html"
                     )
